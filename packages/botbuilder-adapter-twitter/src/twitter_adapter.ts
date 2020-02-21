@@ -6,14 +6,15 @@
  * Licensed under the MIT License.
  */
 
-import { Activity, ActivityTypes, BotAdapter, TurnContext, ConversationReference, ResourceResponse } from 'botbuilder';
+import { Activity, ActivityTypes, BotAdapter, TurnContext, ConversationReference, ResourceResponse, ConsoleTranscriptLogger } from 'botbuilder';
 import * as Debug from 'debug';
 import { TwitterBotWorker } from './botworker';
-import { TwitterAPI, TwitterOAuth } from './twitter_api';
-import * as crypto from 'crypto';
+import { TwitterAPI, TwitterOAuth, AuthType, PayloadType } from './twitter_api';
 import { TwitterWebhookHelper } from './twitter_webhook_helper';
+import * as url from 'url';
 import { Botkit } from 'botkit';
 const debug = Debug('botkit:Twitter');
+
 
 
 /**
@@ -40,25 +41,43 @@ export class TwitterAdapter extends BotAdapter {
 
     private options: TwitterAdapterOptions;
 
+    /**
+     * Instance of the Twitter webhook-helper class.
+     */
     private webhookHelper: TwitterWebhookHelper;
+
+    /**
+     * Instance of the Twitter API client.
+     */
+    private api: TwitterAPI;
+
+    /**
+     * User object of the bots twitter account to identify messages and tweet sent by himself. Set on initilization.
+     */
+    private user: any;
 
     /**
      * Create an adapter to handle incoming messages from Twitter and translate them into a standard format for processing by your bot.
      *
-     * The Twitter Adapter can only be bound to a single Twitter page
+     * The Twitter Adapter can only be bound to a single Twitter page.
      *
      * To create an app bound to a single Twitter page, include that page's `access_token` in the options.
      *     *
      * To use with Botkit:
      * ```javascript
      * const adapter = new TwitterAdapter({
-     *      verify_token: process.env.Twitter_VERIFY_TOKEN,
-     *      app_secret: process.env.Twitter_APP_SECRET,
-     *      access_token: process.env.Twitter_ACCESS_TOKEN
+     *     oauth: {
+     *         consumer_key: process.env.TWITTER_CONSUMER_KEY,
+     *         consumer_secret: process.env.TWITTER_CONSUMER_SECRET,
+     *         token: process.env.TWITTER_TOKEN,
+     *         token_secret: process.env.TWITTER_TOKEN_SECRET
+     *     },
+     *     webhook_env: process.env.TWITTER_WEBHOOK_ENV,
+     *     webhook_url: 'https://20656324.ngrok.io'
      * });
      * const controller = new Botkit({
-     *      adapter: adapter,
-     *      // other options
+     * webhook_uri: '/api/twitter/messages',
+     * adapter: adapter,
      * });
      * ```
      *
@@ -88,22 +107,27 @@ export class TwitterAdapter extends BotAdapter {
         if (!options.oauth) {
             throw new Error('Adapter must receive full oauth credentials for the bot account(access_token, access_token_secret, consumer_key, consumer_secret')
         }
-
+        if (!options.webhook_env) {
+            throw new Error('The label of the developement enviroment was not provided')
+        }
+        if (!options.webhook_url) {
+            throw new Error('The URL where the webhook should be registered was not provided')
+        }
 
         this.options = {
             api_host: 'api.twitter.com',
             api_version: '1.1',
             ...options
         };
-
-
-        this.webhookHelper = new TwitterWebhookHelper(this.options.webhook_env, this.options.oauth);
-
-
+        // get api instance
+        this.api = new TwitterAPI(this.options.oauth, this.options.api_host, this.options.api_version);
+        // get webhook helper instance
+        this.webhookHelper = new TwitterWebhookHelper(this.api, this.options.webhook_env);
+        
         this.middlewares = {
             spawn: [
                 async (bot, next) => {
-                    bot.api = await this.getAPI();
+                    bot.api = this.api;
                     next();
                 }
             ]
@@ -117,9 +141,10 @@ export class TwitterAdapter extends BotAdapter {
      * @param botkit
      */
     public async init(botkit): Promise<any> {
-        debug('Add GET webhook endpoint for verification at: ', botkit.getConfig('webhook_uri'));
+        debug('Verify credentials.')
         // verify credentials and get user id
-        this.options.user_id = (await this.webhookHelper.verifyCredentials(this.options.oauth)).id;
+        this.user = await this.api.verifyCredentials(this.options.oauth);
+        debug('Add GET webhook endpoint for verification at: ', botkit.getConfig('webhook_uri'));
         // listen for crc challegen on webhook
         botkit.webserver.get(botkit.getConfig('webhook_uri'), (req, res) => {
             const crc = this.webhookHelper.validateWebhook(req.query['crc_token'], this.options.oauth)
@@ -127,29 +152,8 @@ export class TwitterAdapter extends BotAdapter {
             res.end(JSON.stringify(crc));
         });
         await this.webhookHelper.removeWebhooks();
-
-
-        await this.webhookHelper.setWebhook(this.options.webhook_url? this.options.webhook_url + botkit.getConfig('webhook_uri') : botkit.getConfig('webhook_uri'), this.options.oauth, this.options.webhook_env);
-        await this.webhookHelper.subscribe(this.options.oauth);
-
-    }
-
-    /**
-     * Get a Twitter API client with the correct credentials.
-     * This is used by many internal functions to get access to the Twitter API, and is exposed as `bot.api` on any BotWorker instances passed into Botkit handler functions.
-     *
-     * ```javascript
-     * let api = adapter.getAPI(activity);
-     * let res = api.callAPI('/me/messages', 'POST', message);
-     * ```
-     * @param activity An incoming message activity
-     */
-    public async getAPI(): Promise<TwitterAPI> {
-        if (this.options.oauth) {
-            return new TwitterAPI(this.options.oauth, this.options.api_host, this.options.api_version)
-        } else {
-            throw new Error('Missing credentials for page.');
-        }
+        await this.webhookHelper.setWebhook(url.resolve(this.options.webhook_url, botkit.getConfig('webhook_uri')));
+        await this.webhookHelper.subscribe();
     }
 
     /**
@@ -172,8 +176,6 @@ export class TwitterAdapter extends BotAdapter {
                 }
             }
         };
-
-
         // map these fields to their appropriate place
         if (activity.channelData) {
             if (activity.channelData.quick_replies) {
@@ -186,17 +188,20 @@ export class TwitterAdapter extends BotAdapter {
                 message.event.message_create.message_data.ctas = activity.channelData.ctas;
             }
         }
-
         debug('OUT TO Twitter > ', message);
-
         return message;
     }
 
+    /**
+     * Build tweet objects from an activity.
+     * If the text is longer than the maximum of 280 chars that are allowed in a tweet it will be split into multiple objects.
+     * These can then be posted as a reply thread.
+     * @param activity The activity to be converted to tweet objects.
+     */
     private activityToTweets(activity: any): any {
         let texts = activity.text.match(/.{1,280}/g);
         return texts.map((text) => {return {
             status: text,
-            in_reply_to_status_id: activity.replyToId,
             auto_populate_reply_metadata: true,
         }});
     }
@@ -211,43 +216,35 @@ export class TwitterAdapter extends BotAdapter {
         const responses = [];
         for (let a = 0; a < activities.length; a++) {
             const activity = activities[a];
-            if (activity.channelId == 'TwitterMention' && activity.type === ActivityTypes.Message) {
-                // TODO: send TwitterMention Activity
+            if (activity.type === 'tweet') {
                 const messages = this.activityToTweets(activity);
                 try {
-                    const api = await this.getAPI(context.activity);
-
-                    await api.postThreadReply(messages);
+                    await this.api.postThreadReply(messages, activity.replyToId);
                 } catch (err) {
                     console.error('Error sending activity to Twitter:', err);
                 }
-            } else if (activity.channelId == 'TwitterDM') {
-                if (activity.type === ActivityTypes.Message) {
-                    const message = this.activityToTwitterDM(activity);
-                    try {
-                        const api = await this.getAPI(context.activity);
-                        const res = await api.callAPI('/direct_messages/events/new.json', 'POST', message);
-                        if (res) {
-                            responses.push({ id: res.message_id });
-                        }
-                        debug('RESPONSE FROM Twitter > ', res);
-                    } catch (err) {
-                        console.error('Error sending activity to Twitter:', err);
+            } else if (activity.type == ActivityTypes.Message) {     
+                const message = this.activityToTwitterDM(activity);
+                try {
+                    const res = await this.api.post('/direct_messages/events/new.json', AuthType.USER_CONTEXT, message);
+                    if (res) {
+                        responses.push({ id: res.message_id });
                     }
-                } else if (activity.type === ActivityTypes.Typing) {
-                    const message = { recipient_id: activity.recipient.id }
-                    try {
-                        const api = await this.getAPI(context.activity);
-                        const res = await api.callAPI('/direct_messages/indicate_typing.json', 'POST', {}, message);
-                        if (res) {
-                            responses.push({ id: res.message_id });
-                        }
-                        debug('RESPONSE FROM Twitter > ', res);
-                    } catch (err) {
-                        console.error('Error sending activity to Twitter:', err);
-                    }
+                    debug('RESPONSE FROM Twitter > ', res);
+                } catch (err) {
+                    console.error('Error sending activity to Twitter:', err);
                 }
-                
+            } else if (activity.type === ActivityTypes.Typing) {
+                const message = { recipient_id: activity.recipient.id }
+                try {
+                    const res = await this.api.post('/direct_messages/indicate_typing.json', AuthType.USER_CONTEXT, message, PayloadType.FORM);
+                    if (res) {
+                        responses.push({ id: res.message_id });
+                    }
+                    debug('RESPONSE FROM Twitter > ', res);
+                } catch (err) {
+                    console.error('Error sending activity to Twitter:', err);
+                }
             } else {
                 // If there are ever any non-message type events that need to be sent, do it here.
                 debug('Unknown message type encountered in sendActivities: ', activity.type);
@@ -305,36 +302,36 @@ export class TwitterAdapter extends BotAdapter {
             for (let i = 0; i < event.tweet_create_events.length; i++) {
                 await this.processSingleMentionTweet(event.tweet_create_events[i], logic);
             }
-        } else if (event.direct_message_events) {
+        }
+        if (event.direct_message_events) {
             for (let i = 0; i < event.direct_message_events.length; i++) {
                 await this.processSingleDM(event.direct_message_events[i], logic);
             }
-        } else if (event.direct_messsage_indicate_typing_events) {
+        }
+        if (event.direct_messsage_indicate_typing_events) {
             for (let i = 0; i < event.direct_messsage_indicate_typing_events.length; i++) {
                 await this.processSingleDMTypingEvent(event.direct_messsage_indicate_typing_events[i], logic);
             }
-        } else if (event.direct_message_mark_read_events) {
+        }
+        if (event.direct_message_mark_read_events) {
             for (let i = 0; i < event.direct_message_mark_read_events.length; i++) {
                 await this.processSingleMarkReadEvent(event.direct_message_mark_read_events[i], logic);
             }
         }
-
         res.status(200);
         res.end();
-    
-        
     }
 
     /**
-     * Handles each individual message inside a webhook payload (webhook may deliver more than one message at a time)
-     * @param message
-     * @param logic
+     * Handles each individual direct message inside a webhook payload (webhook may deliver more than one message at a time)
+     * @param message A direct message object from the Twitter Api.
+     * @param logic A bot logic function in the form `async(context) => { ... }`
      */
     private async processSingleDM(message: any, logic: any): Promise<void> {
         // filter out messages sent by the bot
-        if (message.message_create.sender_id != this.options.user_id) {
+        if (message.message_create.sender_id != this.user.id_str) {
             const activity: Activity = {
-                channelId: 'TwitterDM',
+                channelId: 'twitter',
                 timestamp: new Date(),
                 // @ts-ignore ignore missing optional fields
                 conversation: {
@@ -361,9 +358,14 @@ export class TwitterAdapter extends BotAdapter {
         }        
     }
 
+    /**
+     * Handles each individual direct message typing event inside a webhook payload (webhook may deliver more than one event at a time)
+     * @param message A direct message object from the Twitter Api.
+     * @param logic A bot logic function in the form `async(context) => { ... }`
+     */
     private async processSingleDMTypingEvent(message: any, logic: any) {
         const activity: Activity = {
-            channelId: 'TwitterDM',
+            channelId: 'twitter',
             timestamp: new Date(),
             // @ts-ignore ignore missing optional fields
             conversation: {
@@ -384,9 +386,14 @@ export class TwitterAdapter extends BotAdapter {
         await this.runMiddleware(context, logic);
     }
 
+    /**
+     * Handles each individual direct message mark-read event inside a webhook payload (webhook may deliver more than one event at a time)
+     * @param message A direct message object from the Twitter Api.
+     * @param logic A bot logic function in the form `async(context) => { ... }`
+     */
     private async processSingleMarkReadEvent(message: any, logic: any) {
         const activity: Activity = {
-            channelId: 'TwitterDM',
+            channelId: 'twitter',
             timestamp: new Date(),
             // @ts-ignore ignore missing optional fields
             conversation: {
@@ -407,28 +414,33 @@ export class TwitterAdapter extends BotAdapter {
         await this.runMiddleware(context, logic);
     }
 
+    /**
+     * Handles each individual tweet inside a webhook payload (webhook may deliver more than one tweet at a time)
+     * @param tweet A tweet object from the Twitter Api.
+     * @param logic A bot logic function in the form `async(context) => { ... }`
+     */
     private async processSingleMentionTweet(tweet: any, logic: any) {
         // filter out messages sent by the bot
-        if (tweet.user.id != this.options.user_id) {
+        if (tweet.user.id_str != this.user.id_str && tweet.in_reply_to_user_id_str == this.user.id_str) {
             const activity: Activity = {
-                channelId: 'TwitterMention',
+                channelId: 'twitter',
                 timestamp: new Date(),
                 id: tweet.id_str,
                 // @ts-ignore ignore missing optional fields
                 conversation: {
-                    id: tweet.user.id
+                    id: tweet.user.id_str
                 },
                 from: {
-                    id: tweet.user.id,
-                    name: tweet.user.screen_name
+                    id: tweet.user.id_str,
+                    name: tweet.user.name
                 },
                 recipient: {
-                    id: this.options.user_id,
-                    name: this.options.user_id
+                    id: this.user.id_str,
+                    name: this.user.name
                 },
                 channelData: tweet,
-                type: ActivityTypes.Message,
-                text: tweet.text
+                type: 'tweet',
+                text: tweet.text.replace(`@${this.user.name} `, '')
             };
             for (const key in tweet.entities) {
                 activity.channelData[key] = tweet.entities[key];
@@ -455,26 +467,15 @@ export interface TwitterAdapterOptions {
      */
     api_version?: string;
     /**
-     * Id of the bots twitter account to identify messages and tweet sent by himself.
-     */
-    user_id?: string;
-    /**
-     * Full oauth credentials of the bots twitter account.
+     * Full oauth credentials of the bots twitter account. Mandatory.
      */
     oauth: TwitterOAuth;
     /**
-     * The name 
+     * The label of the dev environment defined in the twitter dev dashboard. Mandatory.
      */
     webhook_env: string;
-
-    webhook_url?: string;
-
-    webhook_port?: string;
-
     /**
-     * Allow the adapter to startup without a complete configuration.
-     * This is risky as it may result in a non-functioning or insecure adapter.
-     * This should only be used when getting started.
+     * URL where the webserver of the bot is reachable. Mandatory.
      */
-    enable_incomplete?: boolean;
+    webhook_url: string;
 }

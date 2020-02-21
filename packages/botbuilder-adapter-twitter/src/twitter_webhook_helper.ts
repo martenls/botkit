@@ -3,61 +3,31 @@ import * as crypto from 'crypto';
 import * as url from 'url';
 import * as request from "request-promise-native";
 import { TwitterError, TooManySubscriptionsError, UserSubscriptionError, WebhookURIError, RateLimitError} from './errors'
-import { TwitterOAuth } from './twitter_api';
+import { TwitterAPI, TwitterOAuth, AuthType, PayloadType } from './twitter_api';
 
-
+/**
+ * Provides methods to help setup a twitter webhook and account activity subscription.
+ */
 export class TwitterWebhookHelper {
     private _getSubscriptionsCount: any = null;
-    private _bearerToken: string = null;
     
-    private headers;
-    private webhookURI;
     private env;
-    private auth: TwitterOAuth;
+    private api: TwitterAPI;
     
-    constructor(env, auth: TwitterOAuth, headers = []) {
+    constructor(api: TwitterAPI, env: string) {
+        this.api = api;
         this.env = env;
-        this.auth = auth;
-        this.headers = headers;
     }
     
-    private async bearerToken(auth) {
-        if (this._bearerToken) {
-            return this._bearerToken;
-        }
-        
-        const requestConfig = {
-            url: 'https://api.twitter.com/oauth2/token',
-            auth: {
-                user: auth.consumer_key,
-                pass: auth.consumer_secret,
-            },
-            form: {
-                grant_type: 'client_credentials',
-            },
-            resolveWithFullResponse: true,
-            ...this.headers,
-        };
-        
-        const response = await request.post(requestConfig);
-        this._bearerToken = JSON.parse(response.body).access_token;
-        return this._bearerToken;
-    }
-    
-    private async getSubscriptionsCount(auth) {
+    /**
+     * Get number of current active subscriptions to the account activity.
+     */
+    private async getSubscriptionsCount() {
         if (this._getSubscriptionsCount) {
             return this._getSubscriptionsCount;
         }
         
-        const token = await this.bearerToken(auth);
-        const requestConfig = {
-            url: 'https://api.twitter.com/1.1/account_activity/all/subscriptions/count.json',
-            auth: { bearer: token },
-            resolveWithFullResponse: true,
-            ...this.headers,
-        };
-        
-        const response = await request.get(requestConfig);
+        const response = await this.api.get('/account_activity/all/subscriptions/count.json', AuthType.BEARER);
         
         switch (response.statusCode) {
             case 200:
@@ -81,41 +51,39 @@ export class TwitterWebhookHelper {
         this._getSubscriptionsCount.subscriptions_count += increment;
     }
     
-    
-    private async getWebhooks(auth, env) {
+    /**
+     * Fetch all registered webhook endpoints.
+     */
+    private async getWebhooks() {
         console.log('Getting webhooks…');
-        const token = await this.bearerToken(auth);
-        const requestConfig = {
-            url: `https://api.twitter.com/1.1/account_activity/all/${env}/webhooks.json`,
-            oauth: auth,
-            resolveWithFullResponse: true,
-            ...this.headers,
-        };
-        
-        const response = await request.get(requestConfig);
+        const response = await this.api.get(`/account_activity/all/${this.env}/webhooks.json`);
         switch (response.statusCode) {
             case 200:
-            break;
+                break;
             case 429:
-            throw new RateLimitError(response);
-            return [];
+                throw new RateLimitError(response);
+                return [];
             default:
-            throw new URIError([
-                `Cannot get webhooks. Please check that '${env}' is a valid environment defined in your`,
-                `Developer dashboard at https://developer.twitter.com/en/account/environments, and that`,
-                `your OAuth credentials are valid and can access '${env}'. (HTTP status: ${response.statusCode})`].join(' '));
-                return [];
-            }
-            
-            try {
-                return JSON.parse(response.body);
-            } catch (e) {
-                throw TypeError('Error while parsing the response from the Twitter API:' + e.message);
-                return [];
-            }
+                throw new URIError([
+                    `Cannot get webhooks. Please check that '${this.env}' is a valid environment defined in your`,
+                    `Developer dashboard at https://developer.twitter.com/en/account/environments, and that`,
+                    `your OAuth credentials are valid and can access '${this.env}'. (HTTP status: ${response.statusCode})`].join(' '));
+                    return [];
+                }
+                
+                try {
+                    return JSON.parse(response.body);
+                } catch (e) {
+                    throw TypeError('Error while parsing the response from the Twitter API:' + e.message);
+                    return [];
+                }
     }
-        
-    public async setWebhook(webhookUrl, auth: TwitterOAuth, env) { 
+    
+    /**
+     * Register specified url as new webhook.
+     * @param webhookUrl The url that should be registered.
+     */
+    public async setWebhook(webhookUrl) { 
         const parsedUrl = url.parse(webhookUrl);
         if (parsedUrl.protocol === null || parsedUrl.host === 'null') {
             throw new TypeError(`${webhookUrl} is not a valid URL. Please provide a valid URL and try again.`);
@@ -125,162 +93,121 @@ export class TwitterWebhookHelper {
             return;
         }
         
-        console.log(`Registering ${webhookUrl} as a new webhook…`);
-        const endpoint = new url.URL(`https://api.twitter.com/1.1/account_activity/all/${env}/webhooks.json`);
-        endpoint.searchParams.append('url', webhookUrl);
-        
-        const requestConfig = {
-            url: endpoint.toString(),
-            oauth: auth,
-            resolveWithFullResponse: true,
-            ...this.headers,
-        }
-        
-        const response = await request.post(requestConfig);
+        console.log(`Registering ${webhookUrl} as a new webhook…`);        
+        const response = await this.api.post(`/account_activity/all/${this.env}/webhooks.json`, AuthType.USER_CONTEXT, { url : webhookUrl}, PayloadType.PATH_PARAMS);
         
         switch (response.statusCode) {
             case 200:
             case 204:
-            break;
+                break;
             case 400:
             case 403:
-            throw new WebhookURIError(response);
-            return null;
+                throw new WebhookURIError(response);
+                return null;
             case 429:
-            console.log(response.headers);
-            throw new RateLimitError(response);
-            return null;
+                console.log(response.headers);
+                throw new RateLimitError(response);
+                return null;
             default:
-            throw new URIError([
-                `Cannot get webhooks. Please check that '${env}' is a valid environment defined in your`,
-                `Developer dashboard at https://developer.twitter.com/en/account/environments, and that`,
-                `your OAuth credentials are valid and can access '${env}'. (HTTP status: ${response.statusCode})`].join(' '));
-                return null;
-            }
-            
-            const body = JSON.parse(response.body);
-            return body;
-        }
-        
-            
-            
-            
-        public validateWebhook(token, auth: TwitterOAuth) {
-            const responseToken = crypto.createHmac('sha256', auth.consumer_secret).update(token).digest('base64');
-            return { response_token: `sha256=${responseToken}` };
-        }
-        
-        public async verifyCredentials(auth: TwitterOAuth) {
-            const requestConfig = {
-                url: 'https://api.twitter.com/1.1/account/verify_credentials.json',
-                oauth: auth,
-                resolveWithFullResponse: true,
-                ...this.headers
-            };
-            
-            const response = await request.get(requestConfig);
-            if (response.statusCode === 200) {
-                return JSON.parse(response.body);
-            } else {
-                throw new UserSubscriptionError(response);
-                return null;
-            }
-        }
-        
-
-        private async deleteWebhooks(webhooks, auth: TwitterOAuth, env) {
-            console.log('Removing webhooks…');
-            for (const {id, url} of webhooks) {
-                const requestConfig = {
-                    url: `https://api.twitter.com/1.1/account_activity/all/${env}/webhooks/${id}.json`,
-                    oauth: auth,
-                    resolveWithFullResponse: true,
-                    ...this.headers,
+                throw new URIError([
+                    `Cannot get webhooks. Please check that '${this.env}' is a valid environment defined in your`,
+                    `Developer dashboard at https://developer.twitter.com/en/account/environments, and that`,
+                    `your OAuth credentials are valid and can access '${this.env}'. (HTTP status: ${response.statusCode})`].join(' '));
+                    return null;
                 }
                 
-                console.log(`Removing ${url}…`);
-                const response = await request.del(requestConfig);
-                
-                switch (response.statusCode) {
-                    case 200:
-                    case 204:
-                    return true;
-                    case 429:
-                    throw new RateLimitError(response);
-                    return false;
-                    default:
-                    throw new URIError([
-                        `Cannot remove ${url}. Please make sure it belongs to '${env}', and that '${env}' is a`,
-                        `valid environment defined in your Developer dashboard at`,
-                        `https://developer.twitter.com/en/account/environments. Also check that your OAuth`,
-                        `credentials are valid and can access '${env}'. (HTTP status: ${response.statusCode})`,
-                    ].join(' '));
-                    return false;
-                }
-            }
-        }
+                const body = JSON.parse(response.body);
+                return body;
+    }
         
-        public async removeWebhooks() {
-            const webhooks = await this.getWebhooks(this.auth, this.env);
-            await this.deleteWebhooks(webhooks, this.auth, this.env);
-        }
-        
-        
-        public async subscribe(auth: TwitterOAuth) {       
-            try {
-                var user = await this.verifyCredentials(auth);
-            } catch (e) {
-                throw e;
+    /**
+     * Solve crc challenge to verify the webhook endpoint is controlled by the owner of the account.
+     * @param token The token that Twitter sends to the endpoint as part of the challenge request.
+     * @param auth The full auth credentials of the account that registers the webhook.
+     */
+    public validateWebhook(token, auth: TwitterOAuth) {
+        const responseToken = crypto.createHmac('sha256', auth.consumer_secret).update(token).digest('base64');
+        return { response_token: `sha256=${responseToken}` };
+    }
+    
+    
+    /**
+     * Delete/Deregister specified webhooks.
+     * @param webhooks The endpoints that should be derigstered.
+     */
+    private async deleteWebhooks(webhooks) {
+        console.log('Removing webhooks…');
+        for (const {id, url} of webhooks) {
+            console.log(`Removing ${url}…`);
+            const response = await this.api.del(`/account_activity/all/${this.env}/webhooks/${id}.json`);
+            
+            switch (response.statusCode) {
+                case 200:
+                case 204:
+                return true;
+                case 429:
+                throw new RateLimitError(response);
+                return false;
+                default:
+                throw new URIError([
+                    `Cannot remove ${url}. Please make sure it belongs to '${this.env}', and that '${this.env}' is a`,
+                    `valid environment defined in your Developer dashboard at`,
+                    `https://developer.twitter.com/en/account/environments. Also check that your OAuth`,
+                    `credentials are valid and can access '${this.env}'. (HTTP status: ${response.statusCode})`,
+                ].join(' '));
                 return false;
             }
-            const {subscriptions_count, provisioned_count} = await this.getSubscriptionsCount(auth);
-            
-            if (subscriptions_count === provisioned_count) {
-                throw new TooManySubscriptionsError([`Cannot subscribe to ${user.screen_name}'s activities:`,
-                'you exceeded the number of subscriptions available to you.',
-                'Please remove a subscription or upgrade your premium access at',
-                'https://developer.twitter.com/apps.',
-            ].join(' '));
+        }
+    }
+    /**
+     * Fetch and remove webhooks.
+     */
+    public async removeWebhooks() {
+        const webhooks = await this.getWebhooks();
+        await this.deleteWebhooks(webhooks);
+    }
+    
+    /**
+     * Subscribe to the account activity of the authenticated user.
+     */
+    public async subscribe() {       
+        const {subscriptions_count, provisioned_count} = await this.getSubscriptionsCount();
+        
+        if (subscriptions_count === provisioned_count) {
+            throw new TooManySubscriptionsError([`Cannot subscribe to activities:`,
+            'you exceeded the number of subscriptions available to you.',
+            'Please remove a subscription or upgrade your premium access at',
+            'https://developer.twitter.com/apps.',
+        ].join(' '));
+        return false;
+        }
+        const response = await this.api.post(`/account_activity/all/${this.env}/subscriptions.json`);
+        if (response.statusCode === 204) {
+            console.log(`Subscribed to activities.`);
+            this.updateSubscriptionCount(1);
+            return true;
+        } else {
+            throw new UserSubscriptionError(response);
             return false;
-            }
-            
-            const requestConfig = {
-                url: `https://api.twitter.com/1.1/account_activity/all/${this.env}/subscriptions.json`,
-                oauth: auth,
-                resolveWithFullResponse: true,
-                ...this.headers,
-            };
-            
-            const response = await request.post(requestConfig);
-            if (response.statusCode === 204) {
-                console.log(`Subscribed to ${user.screen_name}'s activities.`);
-                this.updateSubscriptionCount(1);
-                return true;
-            } else {
-                throw new UserSubscriptionError(response);
-                return false;
-            }
         }
+    }
+    
+    /**
+     * Unsubscribe from the account activity of the authenticated user.
+     * @param userId The id of the account which acitvity should be unsubscribed.
+     */
+    private async unsubscribe(userId) {
+        const response = await this.api.del(`/account_activity/all/${this.env}/subscriptions/${userId}.json`, AuthType.BEARER);
         
-        private async unsubscribe(userId) {
-            const token = await this.bearerToken(this.auth);
-            const requestConfig = {
-                url: `https://api.twitter.com/1.1/account_activity/all/${this.env}/subscriptions/${userId}.json`,
-                auth: { bearer: token },
-                resolveWithFullResponse: true,
-            };
-            
-            const response = await request.del(requestConfig);
-            
-            if (response.statusCode === 204) {
-                console.log(`Unsubscribed from ${userId}'s activities.`);
-                this.updateSubscriptionCount(-1);
-                return true;
-            } else {
-                throw new UserSubscriptionError(response);
-                return false;
-            }
+        if (response.statusCode === 204) {
+            console.log(`Unsubscribed from ${userId}'s activities.`);
+            this.updateSubscriptionCount(-1);
+            return true;
+        } else {
+            throw new UserSubscriptionError(response);
+            return false;
         }
+    }
         
         
         
