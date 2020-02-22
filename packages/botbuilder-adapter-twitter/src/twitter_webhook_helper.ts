@@ -1,7 +1,6 @@
-import * as util from 'util';
 import * as crypto from 'crypto';
 import * as url from 'url';
-import * as request from "request-promise-native";
+
 import { TwitterError, TooManySubscriptionsError, UserSubscriptionError, WebhookURIError, RateLimitError} from './errors'
 import { TwitterAPI, TwitterOAuth, AuthType, PayloadType } from './twitter_api';
 
@@ -31,12 +30,12 @@ export class TwitterWebhookHelper {
         
         switch (response.statusCode) {
             case 200:
-            break;
+                break;
             case 429:
-            throw new RateLimitError(response);
-            break;
+                throw new RateLimitError(response);
+                break;
             default:
-            throw new TwitterError(response);
+                throw new TwitterError(response);
         }
         
         this._getSubscriptionsCount = JSON.parse(response.body);
@@ -68,7 +67,7 @@ export class TwitterWebhookHelper {
                     `Cannot get webhooks. Please check that '${this.env}' is a valid environment defined in your`,
                     `Developer dashboard at https://developer.twitter.com/en/account/environments, and that`,
                     `your OAuth credentials are valid and can access '${this.env}'. (HTTP status: ${response.statusCode})`].join(' '));
-                    return [];
+                return [];
                 }
                 
                 try {
@@ -103,17 +102,17 @@ export class TwitterWebhookHelper {
             case 400:
             case 403:
                 throw new WebhookURIError(response);
-                return null;
+                return;
             case 429:
                 console.log(response.headers);
                 throw new RateLimitError(response);
-                return null;
+                return;
             default:
                 throw new URIError([
                     `Cannot get webhooks. Please check that '${this.env}' is a valid environment defined in your`,
                     `Developer dashboard at https://developer.twitter.com/en/account/environments, and that`,
                     `your OAuth credentials are valid and can access '${this.env}'. (HTTP status: ${response.statusCode})`].join(' '));
-                    return null;
+                    return;
                 }
                 
                 const body = JSON.parse(response.body);
@@ -144,18 +143,18 @@ export class TwitterWebhookHelper {
             switch (response.statusCode) {
                 case 200:
                 case 204:
-                return true;
+                    return true;
                 case 429:
-                throw new RateLimitError(response);
-                return false;
+                    throw new RateLimitError(response);
+                    return false;
                 default:
-                throw new URIError([
-                    `Cannot remove ${url}. Please make sure it belongs to '${this.env}', and that '${this.env}' is a`,
-                    `valid environment defined in your Developer dashboard at`,
-                    `https://developer.twitter.com/en/account/environments. Also check that your OAuth`,
-                    `credentials are valid and can access '${this.env}'. (HTTP status: ${response.statusCode})`,
-                ].join(' '));
-                return false;
+                    throw new URIError([
+                        `Cannot remove ${url}. Please make sure it belongs to '${this.env}', and that '${this.env}' is a`,
+                        `valid environment defined in your Developer dashboard at`,
+                        `https://developer.twitter.com/en/account/environments. Also check that your OAuth`,
+                        `credentials are valid and can access '${this.env}'. (HTTP status: ${response.statusCode})`,
+                    ].join(' '));
+                    return false;
             }
         }
     }

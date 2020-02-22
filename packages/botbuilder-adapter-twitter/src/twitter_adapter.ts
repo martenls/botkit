@@ -5,14 +5,16 @@
  * Copyright (c) Microsoft Corporation. All rights reserved.
  * Licensed under the MIT License.
  */
-
-import { Activity, ActivityTypes, BotAdapter, TurnContext, ConversationReference, ResourceResponse, ConsoleTranscriptLogger } from 'botbuilder';
+import * as url from 'url';
 import * as Debug from 'debug';
-import { TwitterBotWorker } from './botworker';
+
 import { TwitterAPI, TwitterOAuth, AuthType, PayloadType } from './twitter_api';
 import { TwitterWebhookHelper } from './twitter_webhook_helper';
-import * as url from 'url';
-import { Botkit } from 'botkit';
+
+import { Activity, ActivityTypes, BotAdapter, TurnContext, ConversationReference, ResourceResponse } from 'botbuilder';
+
+
+
 const debug = Debug('botkit:Twitter');
 
 
@@ -33,13 +35,8 @@ export class TwitterAdapter extends BotAdapter {
      */
     public middlewares;
 
-    /**
-     * A customized BotWorker object that exposes additional utility methods.
-     * @ignore
-     */
-    public botkit_worker = TwitterBotWorker;
 
-    private options: TwitterAdapterOptions;
+    public options: TwitterAdapterOptions;
 
     /**
      * Instance of the Twitter webhook-helper class.
@@ -308,9 +305,9 @@ export class TwitterAdapter extends BotAdapter {
                 await this.processSingleDM(event.direct_message_events[i], logic);
             }
         }
-        if (event.direct_messsage_indicate_typing_events) {
-            for (let i = 0; i < event.direct_messsage_indicate_typing_events.length; i++) {
-                await this.processSingleDMTypingEvent(event.direct_messsage_indicate_typing_events[i], logic);
+        if (event.direct_message_indicate_typing_events) {
+            for (let i = 0; i < event.direct_message_indicate_typing_events.length; i++) {
+                await this.processSingleDMTypingEvent(event.direct_message_indicate_typing_events[i], logic);
             }
         }
         if (event.direct_message_mark_read_events) {
@@ -376,8 +373,8 @@ export class TwitterAdapter extends BotAdapter {
                 name: message.sender_id
             },
             recipient: {
-                id: message.taget.recipient_id,
-                name: message.taget.recipient_id
+                id: message.target.recipient_id,
+                name: message.target.recipient_id
             },
             channelData: message,
             type: ActivityTypes.Typing
@@ -432,15 +429,15 @@ export class TwitterAdapter extends BotAdapter {
                 },
                 from: {
                     id: tweet.user.id_str,
-                    name: tweet.user.name
+                    name: tweet.user.screen_name
                 },
                 recipient: {
                     id: this.user.id_str,
-                    name: this.user.name
+                    name: this.user.screen_name
                 },
                 channelData: tweet,
                 type: 'tweet',
-                text: tweet.text.replace(`@${this.user.name} `, '')
+                text: tweet.text.replace(`@${this.user.screen_name} `, '')
             };
             for (const key in tweet.entities) {
                 activity.channelData[key] = tweet.entities[key];
