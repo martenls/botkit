@@ -1,12 +1,3 @@
-
-module.exports.FakeAPI = class FakeAPI {
-    constructor(cb) {
-        this.cb = cb;
-    }
-    callAPI(endpoint, method, params) {
-        this.cb(endpoint, method, params);
-    }
-}
 module.exports.Req = class Req {
     constructor(body) {
         this.body = body;
@@ -35,6 +26,4 @@ module.exports.Res = class Res {
     }
 }
 
-module.exports.fakeVerifySignature = fakeVerifySignature = async (req, res) => {
-    return true;
-}
+
