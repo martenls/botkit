@@ -1,54 +1,62 @@
-# botbuilder-adapter-facebook
-Connect [Botkit](https://www.npmjs.com/package/botkit) or [BotBuilder](https://www.npmjs.com/package/botbuilder) to Facebook Messenger.
+# botbuilder-adapter-twitter
+Connect [Botkit](https://www.npmjs.com/package/botkit) or [BotBuilder](https://www.npmjs.com/package/botbuilder) to Twitter.
 
-This package contains an adapter that communicates directly with the Facebook Messenger API,
-and translates messages to and from a standard format used by your bot. This package can be used alongside your favorite bot development framework to build bots that work with Facebook Messenger.
+This package contains an adapter that communicates directly with the Twitter API,
+and translates messages to and from a standard format used by your bot. This package can be used alongside your favorite bot development framework to build bots that work with Twitter direct messages or tweets.
 
 ## Install Package
 
 Add this package to your project using npm:
 
 ```bash
-npm install --save botbuilder-adapter-facebook
+npm install --save botbuilder-adapter-twitter
 ```
 
 Import the adapter class into your code:
 
 ```javascript
-const { FacebookAdapter } = require('botbuilder-adapter-facebook');
+const { TwitterAdapter } = require('botbuilder-adapter-twitter');
 ```
 
 ## Get Started
 
 If you are starting a brand new project, [follow these instructions to create a customized application template.](https://botkit.ai/getstarted.html)
 
-## Use FacebookAdapter in your App
+## Use TwitterAdapter in your App
 
-FacebookAdapter provides a translation layer for Botkit and BotBuilder so that bot developers can connect to Facebook Messenger and have access to Facebook's API.
+TwitterAdapter provides a translation layer for Botkit and BotBuilder so that bot developers can connect to Twitter and have access to Twitters's API.
 
 ### Botkit Basics
 
-When used in concert with Botkit, developers need only pass the configured adapter to the Botkit constructor, as seen below. Botkit will automatically create and configure the webhook endpoints and other options necessary for communicating with Facebook.
+When used in concert with Botkit, developers need only pass the configured adapter to the Botkit constructor, as seen below. Botkit will automatically create and configure the webhook endpoints and other options necessary for communicating with Twitter.
 
 Developers can then bind to Botkit's event emitting system using `controller.on` and `controller.hears` to filter and handle incoming events from the messaging platform. [Learn more about Botkit's core feature &rarr;](../docs/index.md).
 
 [A full description of the FacebookAdapter options and example code can be found in the class reference docs.](../docs/reference/facebook.md#create-a-new-facebookadapter)
 
 ```javascript
-const adapter = new FacebookAdapter({
-     verify_token: process.env.FACEBOOK_VERIFY_TOKEN,
-     app_secret: process.env.FACEBOOK_APP_SECRET,
-     access_token: process.env.FACEBOOK_ACCESS_TOKEN
+const adapter = new TwitterAdapter({
+    oauth: {
+        consumer_key: process.env.TWITTER_CONSUMER_KEY,
+        consumer_secret: process.env.TWITTER_CONSUMER_SECRET,
+        token: process.env.TWITTER_TOKEN,
+        token_secret: process.env.TWITTER_TOKEN_SECRET
+    },
+    webhook_env: process.env.TWITTER_WEBHOOK_ENV,
+    webhook_url: 'https://20656324.ngrok.io'
 });
 
-adapter.use(new FacebookEventTypeMiddleware());
-
 const controller = new Botkit({
+    webhook_uri: '/api/twitter/messages',
     adapter,
     // ...other options
 });
-
+// direct message
 controller.on('message', async(bot, message) => {
+    await bot.reply(message, 'I heard a message!');
+});
+// tweet
+controller.on('tweet', async(bot, message) => {
     await bot.reply(message, 'I heard a message!');
 });
 ```
@@ -58,56 +66,52 @@ controller.on('message', async(bot, message) => {
 Alternately, developers may choose to use `FacebookAdapter` with BotBuilder. With BotBuilder, the adapter is used more directly with a webserver, and all incoming events are handled as [Activities](https://docs.microsoft.com/en-us/javascript/api/botframework-schema/activity?view=botbuilder-ts-latest).
 
 ```javascript
-const { FacebookAdapter } = require('botbuilder-adapter-facebook');
+const { TwitterAdapter, TwitterWebhookHelper, TwitterAPI } = require('botbuilder-adapter-twitter');
 const restify = require('restify');
 
-const adapter = new FacebookAdapter({
-     verify_token: process.env.FACEBOOK_VERIFY_TOKEN,
-     app_secret: process.env.FACEBOOK_APP_SECRET,
-     access_token: process.env.FACEBOOK_ACCESS_TOKEN
+const adapter = new TwitterAdapter({
+    oauth: {
+        consumer_key: process.env.TWITTER_CONSUMER_KEY,
+        consumer_secret: process.env.TWITTER_CONSUMER_SECRET,
+        token: process.env.TWITTER_TOKEN,
+        token_secret: process.env.TWITTER_TOKEN_SECRET
+    },
+    webhook_env: process.env.TWITTER_WEBHOOK_ENV,
+    webhook_url: 'https://fbc97e1e.ngrok.io'
 });
+
 const server = restify.createServer();
 server.use(restify.plugins.bodyParser());
 server.use(restify.plugins.queryParser());
 
-server.get('/api/messages', (req, res) => {
-     if (req.query['hub.mode'] === 'subscribe') {
-          if (req.query['hub.verify_token'] === process.env.FACEBOOK_VERIFY_TOKEN) {
-               const val = req.query['hub.challenge'];
-               res.sendRaw(200, val);
-          } else {
-               console.log('failed to verify endpoint');
-               res.send('OK');
-          }
-     }
+const webhook_uri = '/webhook';
+
+const api = new TwitterAPI(adapter.options.oauth)
+const webhookHelper = new TwitterWebhookHelper(api, adapter.options.webhook_env)
+
+server.get(webhook_uri, (req, res) => {
+    const crc = webhookHelper.validateWebhook(req.query['crc_token'], adapter.options.oauth)
+    res.writeHead(200, {'content-type': 'application/json'});
+    res.end(JSON.stringify(crc));
 });
 
-server.post('/api/messages', (req, res) => {
-     adapter.processActivity(req, res, async(context) => {
-         await context.sendActivity('I heard a message!');
-     });
+
+server.post(webhook_uri, (req, res) => {
+    adapter.processActivity(req, res, async (context) => {
+        await context.sendActivity('I heard a message');
+    });
 });
 
-server.listen(process.env.port || process.env.PORT || 3000, () => {
-     console.log(`\n${ server.name } listening to ${ server.url }`);
- });
-```
 
-### Multi-page Support
+(async init => {
+    server.listen(process.env.port || process.env.PORT || 3000, () => {
+        console.log(`\n${ server.name } listening to ${ server.url }`);
+    });
 
-In the examples above, the `FacebookAdapter` constructor received a single `access_token` parameters. This binds the adapter and all API calls it makes to a single Facebook page.
-
-To use `FacebookAdapter` with multiple Facebook pages, the constructor must receive a function as a paramter named `getAccessTokenForPage` that is responsible for returning a token value when provided a Facebook page ID. The application must implement its own mechanism for securely storing and retrieving the token.
-
-```javascript
-const adapter = new FacebookAdapter({
-    verify_token: process.env.FACEBOOK_VERIFY_TOKEN,
-    app_secret: process.env.FACEBOOK_APP_SECRET,
-    getAccessTokenForPage: async(pageId) => { 
-        // do something to fetch the page access token for pageId.
-        return token;
-    }
-});
+    await webhookHelper.removeWebhooks();
+    await webhookHelper.setWebhook(url.resolve(adapter.options.webhook_url, webhook_uri));
+    await webhookHelper.subscribe();
+})();
 ```
 
 ## Class Reference
@@ -146,41 +150,48 @@ controller.on('message', async(bot, message) {
 
 In Botkit handlers, the `bot` worker for Facebook contains [all of the base methods](../docs/reference/core.md#BotWorker) as well as the following platform-specific extensions:
 
-### Use attachments, quick replies and other rich message features
+### Use call to actions and quick replies in direct message conversations
 
-Botkit will automatically construct your outgoing messages according to Facebook's specifications. To use attachments, quick replies or other features, add them to the message object used to create the reply:
+Botkit will automatically construct your outgoing messages according to Twitter's specifications. To use attachments, quick replies or other features, add them to the message object used to create the reply:
 
 ```javascript
-await bot.reply(message, {
-    text: 'Choose a button', 
-    quick_replies: [
-        {
-            "content_type":"text",
-            "title":"Foo",
-            "payload":"true"
-        },
-        {
-            "content_type":"text",
-            "title":"Bar",
-            "payload":"false"
-        }
-    ]
+controller.hears('quick replies', 'message', async (bot, message) => {
+    await bot.reply(message, {
+        text: 'Here are some quick reply options',
+        type: 'message', 
+        quick_replies: [
+            {
+                label: 'Foo',
+                description: 'foo',
+            },
+            {
+                label: 'Bar',
+                description: 'bar',
+            }
+        ]}
+    );
+});
+
+controller.hears('ctas', 'message', async (bot, message) => {
+    await bot.reply(message, {
+        text: 'Here are your call to actions',
+        type: 'message',
+        ctas: [
+            {
+                type: 'web_url',
+                label: 'The OPAL Website',
+                url: 'http://projekt-opal.de/'
+            },
+            {
+                type: 'web_url',
+                label: 'Fuseki Endpoint',
+                url: 'https://openbot.cs.upb.de/fuseki/'
+            }
+        ]
+    })
 });
 ```
 
-### [Spawn a worker for a specific page](../docs/reference/facebook.md#create-a-new-facebookbotworker)
-
-For a bot that works with multiple pages, it is possible to spawn bot workers bound to a specific page by passing the page ID as the primary parameter to `controller.spawn()`:
-
-```javascript
-let bot = await controller.spawn(FACEBOOK_PAGE_ID);
-```
-
-### [bot.startConversationWithUser()](../docs/reference/facebook.md#startconversationwithuser)
-
-Use this method to initiate a conversation with a user. After calling this method, any further actions carried out by the bot worker will happen with the specified user.
-
-This can be used to create or resume conversations with users that are not in direct response to an incoming message, like those sent on a schedule or in response to external events.
 
 ## Community & Support
 
