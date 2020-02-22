@@ -1,3 +1,0 @@
-- getApi() doesnt need activity reference when multi tenancy mode is not allowed
-- continueConveration() ?
-- trim mentions from tweet text
