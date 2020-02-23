@@ -1,6 +1,6 @@
 {
   "name": "botbuilder-adapter-twitter",
-  "version": "1.0.8",
+  "version": "0.0.1",
   "description": "Connect Botkit or BotBuilder to Twitter",
   "main": "lib/index.js",
   "typings": "./lib/index.d.ts",
@@ -33,8 +33,7 @@
     "botbuilder": "^4.7.1",
     "botkit": "^4.6.2",
     "debug": "^4.1.0",
-    "request-promise-native": "^1.0.8",
-    "twitter-autohook": "^1.4.1"
+    "request-promise-native": "^1.0.8"
   },
   "devDependencies": {
     "eslint": "^6.8.0",
