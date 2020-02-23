@@ -32,7 +32,6 @@ When used in concert with Botkit, developers need only pass the configured adapt
 
 Developers can then bind to Botkit's event emitting system using `controller.on` and `controller.hears` to filter and handle incoming events from the messaging platform. [Learn more about Botkit's core feature &rarr;](../docs/index.md).
 
-[A full description of the FacebookAdapter options and example code can be found in the class reference docs.](../docs/reference/facebook.md#create-a-new-facebookadapter)
 
 ```javascript
 const adapter = new TwitterAdapter({
@@ -63,7 +62,7 @@ controller.on('tweet', async(bot, message) => {
 
 ### BotBuilder Basics
 
-Alternately, developers may choose to use `FacebookAdapter` with BotBuilder. With BotBuilder, the adapter is used more directly with a webserver, and all incoming events are handled as [Activities](https://docs.microsoft.com/en-us/javascript/api/botframework-schema/activity?view=botbuilder-ts-latest).
+Alternately, developers may choose to use `TwitterAdapter` with BotBuilder. With BotBuilder, the adapter is used more directly with a webserver, and all incoming events are handled as [Activities](https://docs.microsoft.com/en-us/javascript/api/botframework-schema/activity?view=botbuilder-ts-latest).
 
 ```javascript
 const { TwitterAdapter, TwitterWebhookHelper, TwitterAPI } = require('botbuilder-adapter-twitter');
@@ -116,39 +115,29 @@ server.post(webhook_uri, (req, res) => {
 
 ## Class Reference
 
-* [FacebookAdapter](../docs/reference/facebook.md#facebookadapter)
-* [BotWorker Extensions](../docs/reference/facebook.md#facebookbotworker)
-* [Facebook API Client](../docs/reference/facebook.md#facebookapi)
 
-## Event List
 
-[Botkit event types are controlled by the FacebookEventMiddleware](../docs/reference/facebook.md#facebookeventtypemiddleware).
+## Calling Twitter APIs
 
-Without this middleware applied, Botkit bots will receive `message` events when a user types a message or clicks a postback_button, and an `event` event for all other types of event received from Facebook.
-
-Most Botkit developers who plan to use features above and beyond Facebook's send API should enable this middleware.
-
-## Calling Facebook APIs
-
-This package also includes [a minimal Facebook API client](../docs/reference/facebook.md#facebookapi) for developers who want to use one of the many available API endpoints.
+This package also includes a minimal Twitter API client for developers who want to use one of the many available API endpoints.
 
 In Botkit handlers, the `bot` worker object passed into all handlers will contain a `bot.api` field that contains the client, preconfigured and ready to use.
 
-To use with a BotBuilder application, the adapter provides the [getAPI() method](../docs/reference/facebook.md#getapi).
+To use with a BotBuilder application, the adapter provides the [getAPI() method]().
 
 ```javascript
 controller.on('message', async(bot, message) {
 
-    // call the facebook API to get the bot's page identity
-    let identity = await bot.api.callAPI('/me', 'GET', {});
-    await bot.reply(message,`My name is ${ identity.name }`);
+    // call the Twitter API to get the bot's account settings
+    const res = await bot.api.get('/account/settings.json');
+    await bot.reply(message, { text: res.body });
 
 });
 ```
 
 ## Botkit Extensions
 
-In Botkit handlers, the `bot` worker for Facebook contains [all of the base methods](../docs/reference/core.md#BotWorker) as well as the following platform-specific extensions:
+In Botkit handlers, the `bot` worker for Twitter contains [all of the base methods](../docs/reference/core.md#BotWorker) as well as the following platform-specific extensions:
 
 ### Use call to actions and quick replies in direct message conversations
 

@@ -10,6 +10,7 @@ import * as Debug from 'debug';
 
 import { TwitterAPI, TwitterOAuth, AuthType, PayloadType } from './twitter_api';
 import { TwitterWebhookHelper } from './twitter_webhook_helper';
+import { TwitterBotWorker } from './twitter_botworker';
 
 import { Activity, ActivityTypes, BotAdapter, TurnContext, ConversationReference, ResourceResponse } from 'botbuilder';
 
@@ -34,6 +35,12 @@ export class TwitterAdapter extends BotAdapter {
      * @ignore
      */
     public middlewares;
+
+    /**
+     * A customized BotWorker object that exposes additional utility methods.
+     * @ignore
+     */
+    public botkit_worker = TwitterBotWorker;
 
 
     public options: TwitterAdapterOptions;
