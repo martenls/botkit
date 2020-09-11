@@ -1,8 +1,7 @@
 # botbuilder-adapter-twitter
 Connect [Botkit](https://www.npmjs.com/package/botkit) or [BotBuilder](https://www.npmjs.com/package/botbuilder) to Twitter.
 
-This package contains an adapter that communicates directly with the Twitter API,
-and translates messages to and from a standard format used by your bot. This package can be used alongside your favorite bot development framework to build bots that work with Twitter direct messages or tweets.
+This package contains an adapter that communicates directly with the Twitter API, and translates messages to and from a standard format used by your bot. This package can be used alongside your favorite bot development framework to build bots that work with Twitter direct messages or tweets.
 
 ## Install Package
 
