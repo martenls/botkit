@@ -167,13 +167,13 @@ controller.hears('ctas', 'message', async (bot, message) => {
         ctas: [
             {
                 type: 'web_url',
-                label: 'The OPAL Website',
-                url: 'http://projekt-opal.de/'
+                label: 'Twitter',
+                url: 'https://twitter.com/'
             },
             {
                 type: 'web_url',
-                label: 'Fuseki Endpoint',
-                url: 'https://openbot.cs.upb.de/fuseki/'
+                label: 'Facebook',
+                url: 'https://facebook.com/'
             }
         ]
     })
